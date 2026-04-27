@@ -1,402 +1,285 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, onSnapshot, doc, serverTimestamp } from 'firebase/firestore';
-
-// Firebase 配置
-const firebaseConfig = {
-  apiKey: "AIzaSyBTJbobhDm68TU19CrelfRJvlfwSni7b-o",
-  authDomain: "excersise-d4003.firebaseapp.com",
-  projectId: "excersise-d4003",
-  storageBucket: "excersise-d4003.firebasestorage.app",
-  messagingSenderId: "188132630421",
-  appId: "1:188132630421:web:3a82d3e874bdbbe3e8e09c"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-
-const appId = "yu-cheng-robot-v5";
-
-// --- 音效產生器 ---
-const playSound = (type) => {
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-
-  const now = ctx.currentTime;
-
-  switch (type) {
-    case 'START':
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(440, now);
-      osc.frequency.exponentialRampToValueAtTime(880, now + 0.2);
-      gain.gain.setValueAtTime(0.1, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-      osc.start(now);
-      osc.stop(now + 0.2);
-      break;
-    case 'TICK':
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, now);
-      gain.gain.setValueAtTime(0.1, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
-      osc.start(now);
-      osc.stop(now + 0.1);
-      break;
-    case 'FINISH':
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(523.25, now);
-      osc.frequency.setValueAtTime(659.25, now + 0.1);
-      osc.frequency.setValueAtTime(783.99, now + 0.2);
-      osc.frequency.setValueAtTime(1046.50, now + 0.3);
-      gain.gain.setValueAtTime(0.1, now);
-      gain.gain.linearRampToValueAtTime(0, now + 0.6);
-      osc.start(now);
-      osc.stop(now + 0.6);
-      break;
-    default:
-      break;
-  }
-};
-
-// --- 圖片壓縮工具 ---
-const compressImage = (base64Str, maxWidth = 400, maxHeight = 400) => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.src = base64Str;
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      let width = img.width;
-      let height = img.height;
-
-      if (width > height) {
-        if (width > maxWidth) {
-          height *= maxWidth / width;
-          width = maxWidth;
-        }
-      } else {
-        if (height > maxHeight) {
-          width *= maxHeight / height;
-          height = maxHeight;
-        }
-      }
-
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, width, height);
-      // 壓縮質量設為 0.7
-      resolve(canvas.toDataURL('image/jpeg', 0.7));
-    };
-  });
-};
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [limitRank, setLimitRank] = useState([]);    
-  const [chalRank, setChalRank] = useState([]);      
-  const [activeMode, setActiveMode] = useState(null); 
-  
-  const [timeLeft, setTimeLeft] = useState(60);      
-  const [elapsedTime, setElapsedTime] = useState(0); 
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [liveCommentary, setLiveCommentary] = useState("等待賽事啟動...");
-  const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({ name: '', score: '', photo: null });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  const fileInputRef = useRef(null);
-
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        await signInAnonymously(auth);
-      } catch (err) {
-        console.error("Firebase 匿名登入失敗", err);
-      }
-    };
-    initAuth();
-    const unsubscribeAuth = onAuthStateChanged(auth, setUser);
-    return () => unsubscribeAuth();
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const limitCol = collection(db, 'artifacts', appId, 'public', 'data', 'limit_mode');
-    const chalCol = collection(db, 'artifacts', appId, 'public', 'data', 'chal_mode');
-
-    const unsubLimit = onSnapshot(limitCol, (s) => {
-      const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
-      setLimitRank(data.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)).slice(0, 10));
-    }, (err) => console.error("監聽限時賽失敗:", err));
-
-    const unsubChal = onSnapshot(chalCol, (s) => {
-      const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
-      setChalRank(data.sort((a, b) => (Number(a.timeSeconds) || 0) - (Number(b.timeSeconds) || 0)).slice(0, 10));
-    }, (err) => console.error("監聽挑戰賽失敗:", err));
-
-    return () => { unsubLimit(); unsubChal(); };
-  }, [user]);
-
-  useEffect(() => {
-    let timer;
-    if (isTimerRunning) {
-      timer = setInterval(() => {
-        if (activeMode === 'LIMIT') {
-          setTimeLeft(prev => {
-            if (prev <= 6 && prev > 1) playSound('TICK');
-            if (prev <= 1) {
-              clearInterval(timer);
-              setIsTimerRunning(false);
-              setShowForm(true);
-              playSound('FINISH');
-              return 0;
-            }
-            return prev - 1;
-          });
-        } else if (activeMode === 'CHAL') {
-          setElapsedTime(prev => prev + 0.1);
-        }
-      }, 100);
-    }
-    return () => clearInterval(timer);
-  }, [isTimerRunning, activeMode]);
-
-  const startMode = (mode) => {
-    playSound('START');
-    setIsTimerRunning(false);
-    setActiveMode(mode);
-    setTimeLeft(60);
-    setElapsedTime(0);
-    setShowForm(false);
-    setFormData({ name: '', score: '', photo: null });
-    setIsTimerRunning(true);
-    setLiveCommentary("比賽開始！機器人加油！");
-  };
-
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async () => {
-      // 讀取原始照片後立即壓縮
-      const compressed = await compressImage(reader.result);
-      setFormData({...formData, photo: compressed});
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const submitScore = async () => {
-    if (!formData.name) {
-      alert("請輸入姓名");
-      return;
-    }
-    if (!user) return;
-
-    setIsSubmitting(true);
-    const collectionName = activeMode === 'LIMIT' ? 'limit_mode' : 'chal_mode';
-    
-    try {
-      const payload = {
-        name: formData.name,
-        photo: formData.photo,
-        createdAt: serverTimestamp(),
-        timestamp: Date.now(),
-        ...(activeMode === 'LIMIT' ? { score: Number(formData.score || 0) } : { timeSeconds: parseFloat(elapsedTime.toFixed(1)) })
-      };
-
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', collectionName), payload);
-      setShowForm(false);
-      setActiveMode(null);
-    } catch (err) {
-      console.error("寫入 Firestore 失敗:", err);
-      alert("上傳失敗。這通常是圖片太大導致的，請確保已拍照並重試。");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="h-screen w-full bg-[#050507] text-zinc-100 flex overflow-hidden font-sans">
-      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-      
-      <style>{`
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>育成高中人型機器人體驗活動系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <style>
         @keyframes robot-dance {
-          0% { transform: scale(1) rotate(0deg); filter: drop-shadow(0 0 5px rgba(220, 38, 38, 0.2)); }
-          25% { transform: scale(1.1) rotate(3deg); filter: drop-shadow(0 0 20px rgba(220, 38, 38, 0.6)); }
-          50% { transform: scale(1.05) rotate(-3deg); filter: drop-shadow(0 0 10px rgba(220, 38, 38, 0.4)); }
-          75% { transform: scale(1.15) rotate(2deg); filter: drop-shadow(0 0 25px rgba(220, 38, 38, 0.7)); }
-          100% { transform: scale(1) rotate(0deg); filter: drop-shadow(0 0 5px rgba(220, 38, 38, 0.2)); }
+            0% { transform: scale(1) rotate(0deg); filter: drop-shadow(0 0 5px rgba(220, 38, 38, 0.2)); }
+            25% { transform: scale(1.1) rotate(3deg); filter: drop-shadow(0 0 20px rgba(220, 38, 38, 0.6)); }
+            50% { transform: scale(1.05) rotate(-3deg); filter: drop-shadow(0 0 10px rgba(220, 38, 38, 0.4)); }
+            75% { transform: scale(1.15) rotate(2deg); filter: drop-shadow(0 0 25px rgba(220, 38, 38, 0.7)); }
+            100% { transform: scale(1) rotate(0deg); filter: drop-shadow(0 0 5px rgba(220, 38, 38, 0.2)); }
         }
         .animate-robot-dance {
-          animation: robot-dance 3s infinite ease-in-out;
+            animation: robot-dance 3s infinite ease-in-out;
         }
-      `}</style>
+    </style>
+</head>
+<body class="bg-[#050507] text-zinc-100 font-sans h-screen flex overflow-hidden">
 
-      {/* 左側：控制面板 */}
-      <div className="w-[400px] border-r border-white/5 bg-zinc-950 p-6 flex flex-col overflow-y-auto shadow-2xl relative">
-        <header className="mb-8">
-          <div className="flex items-center gap-4 mb-2">
-            <div className="w-12 h-12 bg-red-600 rounded-2xl flex items-center justify-center shadow-lg shadow-red-600/20">
-              <i className="fa-solid fa-robot text-2xl text-white"></i>
+    <!-- 左側：控制面板 -->
+    <div class="w-[400px] border-r border-white/5 bg-zinc-950 p-6 flex flex-col overflow-y-auto shadow-2xl relative">
+        <header class="mb-8">
+            <div class="flex items-center gap-4 mb-2">
+                <div class="w-12 h-12 bg-red-600 rounded-2xl flex items-center justify-center shadow-lg shadow-red-600/20">
+                    <i class="fa-solid fa-robot text-2xl text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-black text-white leading-none italic">人型機器人體驗活動</h1>
+                    <p class="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">Yu-Cheng High School Robotics</p>
+                </div>
             </div>
-            <div>
-              <h1 className="text-xl font-black text-white leading-none italic">人型機器人體驗活動</h1>
-              <p className="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">Yu-Cheng High School Robotics</p>
-            </div>
-          </div>
         </header>
 
-        <div className="mb-6 p-4 rounded-2xl bg-blue-600/10 border border-blue-500/20">
-          <div className="text-[10px] font-black text-blue-400 mb-1 flex items-center gap-2">
-            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> LIVE BROADCAST
-          </div>
-          <p className="text-sm text-blue-100 italic">「 {liveCommentary} 」</p>
-        </div>
-
-        <div className="bg-zinc-900 rounded-3xl p-8 mb-6 flex justify-center items-center border border-white/5 relative group overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-t from-red-600/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl"></div>
-          {isTimerRunning && <div className="absolute inset-0 bg-red-600/5 animate-pulse"></div>}
-          <img 
-            src="./S__10477572_0-removebg-preview.png" 
-            className={`h-40 object-contain transition-all duration-500 z-10 ${isTimerRunning ? 'animate-robot-dance' : 'group-hover:scale-110 group-hover:rotate-2'}`}
-            alt="Robot Avatar"
-            onError={(e) => { e.target.src = "https://img.icons8.com/color/144/robot.png"; }} 
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <button 
-            disabled={isTimerRunning}
-            onClick={() => startMode('LIMIT')} 
-            className={`p-4 rounded-2xl border-2 transition-all ${activeMode === 'LIMIT' ? 'border-red-500 bg-red-500/10 shadow-lg' : 'border-zinc-800 hover:border-zinc-700 opacity-60'}`}
-          >
-            <div className="text-[10px] font-bold mb-1 opacity-60">任務賽</div>
-            <div className="text-3xl font-black text-red-500">{activeMode === 'LIMIT' ? timeLeft : '60'}s</div>
-          </button>
-          <button 
-            disabled={isTimerRunning}
-            onClick={() => startMode('CHAL')} 
-            className={`p-4 rounded-2xl border-2 transition-all ${activeMode === 'CHAL' ? 'border-blue-500 bg-blue-500/10 shadow-lg' : 'border-zinc-800 hover:border-zinc-700 opacity-60'}`}
-          >
-            <div className="text-[10px] font-bold mb-1 opacity-60">3球挑戰賽</div>
-            <div className="text-3xl font-black text-blue-400">{activeMode === 'CHAL' ? elapsedTime.toFixed(1) : '0.0'}s</div>
-          </button>
-        </div>
-
-        {activeMode === 'CHAL' && isTimerRunning && (
-          <button onClick={() => { setIsTimerRunning(false); setShowForm(true); playSound('FINISH'); }} className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl font-black text-lg mb-6 shadow-xl shadow-blue-600/20 active:scale-95 transition-all">
-            我投完了！(停止計時)
-          </button>
-        )}
-
-        {showForm && (
-          <div className="bg-zinc-900 border border-red-500/50 p-5 rounded-3xl shadow-2xl animate-in zoom-in-95 duration-300 mb-6">
-            <h3 className="font-bold mb-4 text-white flex items-center gap-2">🏆 挑戰完成！登錄成績</h3>
-            <div className="space-y-4">
-              <div className="flex gap-4">
-                <div onClick={() => fileInputRef.current.click()} className="w-20 h-20 bg-black rounded-xl border-2 border-dashed border-zinc-700 flex flex-col items-center justify-center cursor-pointer overflow-hidden group hover:border-red-500 transition-colors">
-                  {formData.photo ? <img src={formData.photo} className="w-full h-full object-cover" /> : <i className="fa-solid fa-camera text-zinc-600 group-hover:text-zinc-400"></i>}
-                  <input type="file" ref={fileInputRef} className="hidden" accept="image/*" capture="environment" onChange={handleFileChange} />
-                </div>
-                <div className="flex-1 space-y-2">
-                  <input type="text" placeholder="參賽者姓名" className="w-full bg-black p-3 rounded-xl border border-zinc-700 focus:border-red-500 outline-none transition-colors" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-                  {activeMode === 'LIMIT' && (
-                    <input type="number" placeholder="投進顆數" className="w-full bg-black p-3 rounded-xl border border-zinc-700 focus:border-red-500 outline-none font-bold" value={formData.score} onChange={e => setFormData({...formData, score: e.target.value})} />
-                  )}
-                </div>
-              </div>
-              <button 
-                disabled={isSubmitting}
-                onClick={submitScore} 
-                className="w-full bg-red-600 hover:bg-red-500 disabled:bg-zinc-700 py-3 rounded-xl font-bold transition-all shadow-lg shadow-red-600/20"
-              >
-                {isSubmitting ? <i className="fa-solid fa-sync fa-spin"></i> : "上傳成績"}
-              </button>
+        <div class="mb-6 p-4 rounded-2xl bg-blue-600/10 border border-blue-500/20">
+            <div class="text-[10px] font-black text-blue-400 mb-1 flex items-center gap-2">
+                <span class="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> LIVE BROADCAST
             </div>
-          </div>
-        )}
-
-        <div className="mt-auto space-y-3 text-[13px] text-zinc-400 font-medium">
-            <h4 className="text-[11px] font-black tracking-widest text-zinc-600 uppercase mb-2 border-b border-white/5 pb-1">遙控器按鍵組合</h4>
-            <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-zinc-200">上 / 下</span> 前進/後退</div>
-            <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-zinc-200">左 / 右</span> 左轉/右轉</div>
-            <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-zinc-200">R1 / R2 / L1 / L2</span> 橫向移動</div>
-            <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-white bg-blue-600 px-1.5 rounded">○鈕</span> <span className="text-white">右手投球</span></div>
-            <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-white bg-red-600 px-1.5 rounded">□鈕</span> <span className="text-white">左手投球</span></div>
-            <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-zinc-200">X鈕 + R鈕組合</span> 夾球/放球</div>
-        </div>
-      </div>
-
-      {/* 右側：排行榜 */}
-      <div className="flex-1 p-8 grid grid-rows-2 gap-8 overflow-hidden">
-        {/* 限時賽排行榜 */}
-        <div className="flex flex-col min-h-0 flex-1">
-          <h2 className="text-xl font-black text-red-500 mb-4 flex items-center gap-3 italic">
-            <span className="w-1.5 h-6 bg-red-600 rounded"></span>任務賽(限時1分鐘)英雄榜
-          </h2>
-          <div className="flex-1 bg-zinc-900/50 rounded-3xl border border-white/5 overflow-y-auto px-4 shadow-inner">
-            <table className="w-full text-left">
-              <thead className="sticky top-0 bg-[#050507] p-4 text-[10px] text-zinc-500 uppercase tracking-widest font-black">
-                <tr><th className="py-4 px-2 w-16 text-center">排名</th><th>參賽者</th><th className="text-right px-4">進球數</th></tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {limitRank.map((r, i) => (
-                  <tr key={r.id || i} className="group hover:bg-white/5 transition-colors">
-                    <td className="py-4 px-2 text-center">
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${i===0?'bg-yellow-500 text-black shadow-yellow-500/20':i===1?'bg-zinc-300 text-black':i===2?'bg-amber-700 text-black':'text-zinc-600 border border-zinc-800'}`}>{i+1}</span>
-                    </td>
-                    <td className="py-4 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-zinc-800 border border-white/10 overflow-hidden shadow-inner">
-                        {r.photo && <img src={r.photo} className="w-full h-full object-cover" />}
-                      </div>
-                      <span className="font-bold text-lg text-zinc-100">{r.name}</span>
-                    </td>
-                    <td className="py-4 text-right px-4 font-black text-2xl text-red-500 italic">{r.score} <span className="text-xs opacity-40">GOAL</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+            <p id="liveCommentary" class="text-sm text-blue-100 italic">「 等待賽事啟動... 」</p>
         </div>
 
-        {/* 挑戰賽排行榜 */}
-        <div className="flex flex-col min-h-0 flex-1">
-          <h2 className="text-xl font-black text-blue-400 mb-4 flex items-center gap-3 italic">
-            <span className="w-1.5 h-6 bg-blue-500 rounded"></span>3球挑戰賽(限時1分鐘)英雄榜
-          </h2>
-          <div className="flex-1 bg-zinc-900/50 rounded-3xl border border-white/5 overflow-y-auto px-4 shadow-inner">
-            <table className="w-full text-left">
-              <thead className="sticky top-0 bg-[#050507] p-4 text-[10px] text-zinc-500 uppercase tracking-widest font-black">
-                <tr><th className="py-4 px-2 w-16 text-center">排名</th><th>參賽者</th><th className="text-right px-4">完賽耗時</th></tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {chalRank.map((r, i) => (
-                  <tr key={r.id || i} className="group hover:bg-white/5 transition-colors">
-                    <td className="py-4 px-2 text-center">
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${i===0?'bg-yellow-500 text-black shadow-yellow-500/20':i===1?'bg-zinc-300 text-black':i===2?'bg-amber-700 text-black':'text-zinc-600 border border-zinc-800'}`}>{i+1}</span>
-                    </td>
-                    <td className="py-4 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-zinc-800 border border-white/10 overflow-hidden shadow-inner">
-                        {r.photo && <img src={r.photo} className="w-full h-full object-cover" />}
-                      </div>
-                      <span className="font-bold text-lg text-zinc-100">{r.name}</span>
-                    </td>
-                    <td className="py-4 text-right px-4 font-black text-2xl text-blue-400 italic">{r.timeSeconds} <span className="text-xs opacity-40">SEC</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div class="bg-zinc-900 rounded-3xl p-8 mb-6 flex justify-center items-center border border-white/5 relative group overflow-hidden">
+            <div id="robotBg" class="absolute inset-0 bg-gradient-to-t from-red-600/20 to-transparent opacity-0 transition-opacity rounded-3xl"></div>
+            <img id="robotImg" src="https://img.icons8.com/color/144/robot.png" class="h-40 object-contain transition-all duration-500 z-10" alt="Robot Avatar" />
         </div>
-      </div>
+
+        <div class="grid grid-cols-2 gap-3 mb-6">
+            <button id="btnLimit" onclick="startMode('LIMIT')" class="p-4 rounded-2xl border-2 border-zinc-800 hover:border-zinc-700 transition-all">
+                <div class="text-[10px] font-bold mb-1 opacity-60">任務賽</div>
+                <div id="displayLimit" class="text-3xl font-black text-red-500">60s</div>
+            </button>
+            <button id="btnChal" onclick="startMode('CHAL')" class="p-4 rounded-2xl border-2 border-zinc-800 hover:border-zinc-700 transition-all">
+                <div class="text-[10px] font-bold mb-1 opacity-60">3球挑戰賽</div>
+                <div id="displayChal" class="text-3xl font-black text-blue-400">0.0s</div>
+            </button>
+        </div>
+
+        <button id="btnFinish" onclick="finishChal()" class="hidden w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl font-black text-lg mb-6 shadow-xl shadow-blue-600/20 active:scale-95 transition-all">
+            我投完了！(停止計時)
+        </button>
+
+        <div id="scoreForm" class="hidden bg-zinc-900 border border-red-500/50 p-5 rounded-3xl shadow-2xl mb-6">
+            <h3 class="font-bold mb-4 text-white flex items-center gap-2">🏆 挑戰完成！登錄成績</h3>
+            <div class="space-y-4">
+                <div class="flex gap-4">
+                    <div onclick="document.getElementById('fileInput').click()" class="w-20 h-20 bg-black rounded-xl border-2 border-dashed border-zinc-700 flex flex-col items-center justify-center cursor-pointer overflow-hidden group hover:border-red-500 transition-colors">
+                        <img id="photoPreview" class="hidden w-full h-full object-cover" />
+                        <i id="cameraIcon" class="fa-solid fa-camera text-zinc-600 group-hover:text-zinc-400"></i>
+                        <input type="file" id="fileInput" class="hidden" accept="image/*" capture="environment" onchange="handleFile(this)">
+                    </div>
+                    <div class="flex-1 space-y-2">
+                        <input type="text" id="inputName" placeholder="參賽者姓名" class="w-full bg-black p-3 rounded-xl border border-zinc-700 focus:border-red-500 outline-none transition-colors">
+                        <input type="number" id="inputScore" placeholder="投進顆數" class="hidden w-full bg-black p-3 rounded-xl border border-zinc-700 focus:border-red-500 outline-none font-bold">
+                    </div>
+                </div>
+                <button id="btnSubmit" onclick="submitScore()" class="w-full bg-red-600 hover:bg-red-500 py-3 rounded-xl font-bold transition-all shadow-lg shadow-red-600/20">
+                    上傳成績
+                </button>
+            </div>
+        </div>
+
+        <div class="mt-auto space-y-3 text-[13px] text-zinc-400 font-medium">
+            <h4 class="text-[11px] font-black tracking-widest text-zinc-600 uppercase mb-2 border-b border-white/5 pb-1">遙控器按鍵組合</h4>
+            <div class="flex justify-between border-b border-zinc-800 pb-1.5"><span class="font-black text-zinc-200">上 / 下</span> 前進/後退</div>
+            <div class="flex justify-between border-b border-zinc-800 pb-1.5"><span class="font-black text-zinc-200">左 / 右</span> 左轉/右轉</div>
+            <div class="flex justify-between border-b border-zinc-800 pb-1.5"><span class="font-black text-white bg-blue-600 px-1.5 rounded">○鈕</span> <span class="text-white">右手投球</span></div>
+            <div class="flex justify-between border-b border-zinc-800 pb-1.5"><span class="font-black text-white bg-red-600 px-1.5 rounded">□鈕</span> <span class="text-white">左手投球</span></div>
+        </div>
     </div>
-  );
-}
+
+    <!-- 右側：排行榜 -->
+    <div class="flex-1 p-8 grid grid-rows-2 gap-8 overflow-hidden">
+        <div class="flex flex-col min-h-0 flex-1">
+            <h2 class="text-xl font-black text-red-500 mb-4 flex items-center gap-3 italic">
+                <span class="w-1.5 h-6 bg-red-600 rounded"></span>任務賽(限時1分鐘)英雄榜
+            </h2>
+            <div class="flex-1 bg-zinc-900/50 rounded-3xl border border-white/5 overflow-y-auto px-4">
+                <table class="w-full text-left">
+                    <thead class="sticky top-0 bg-[#050507] p-4 text-[10px] text-zinc-500 uppercase tracking-widest font-black">
+                        <tr><th class="py-4 px-2 w-16 text-center">排名</th><th>參賽者</th><th class="text-right px-4">進球數</th></tr>
+                    </thead>
+                    <tbody id="limitTable" class="divide-y divide-white/5"></tbody>
+                </table>
+            </div>
+        </div>
+        <div class="flex flex-col min-h-0 flex-1">
+            <h2 class="text-xl font-black text-blue-400 mb-4 flex items-center gap-3 italic">
+                <span class="w-1.5 h-6 bg-blue-500 rounded"></span>3球挑戰賽(限時1分鐘)英雄榜
+            </h2>
+            <div class="flex-1 bg-zinc-900/50 rounded-3xl border border-white/5 overflow-y-auto px-4">
+                <table class="w-full text-left">
+                    <thead class="sticky top-0 bg-[#050507] p-4 text-[10px] text-zinc-500 uppercase tracking-widest font-black">
+                        <tr><th class="py-4 px-2 w-16 text-center">排名</th><th>參賽者</th><th class="text-right px-4">完賽耗時</th></tr>
+                    </thead>
+                    <tbody id="chalTable" class="divide-y divide-white/5"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBTJbobhDm68TU19CrelfRJvlfwSni7b-o",
+            authDomain: "excersise-d4003.firebaseapp.com",
+            projectId: "excersise-d4003",
+            storageBucket: "excersise-d4003.firebasestorage.app",
+            messagingSenderId: "188132630421",
+            appId: "1:188132630421:web:3a82d3e874bdbbe3e8e09c"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = "yu-cheng-robot-v5";
+
+        let activeMode = null;
+        let timer = null;
+        let timeLeft = 60;
+        let elapsedTime = 0;
+        let currentPhoto = null;
+
+        // 音效
+        const playSound = (type) => {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            const now = ctx.currentTime;
+            if (type === 'START') {
+                osc.type = 'square'; osc.frequency.setValueAtTime(440, now); osc.frequency.exponentialRampToValueAtTime(880, now + 0.2);
+                gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                osc.start(now); osc.stop(now + 0.2);
+            } else if (type === 'FINISH') {
+                osc.type = 'triangle'; osc.frequency.setValueAtTime(523, now); osc.frequency.setValueAtTime(1046, now + 0.3);
+                gain.gain.setValueAtTime(0.1, now); gain.gain.linearRampToValueAtTime(0, now + 0.6);
+                osc.start(now); osc.stop(now + 0.6);
+            }
+        };
+
+        // 圖片壓縮
+        const compressImage = (base64Str) => {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.src = base64Str;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_SIZE = 400;
+                    let w = img.width, h = img.height;
+                    if (w > h) { if (w > MAX_SIZE) { h *= MAX_SIZE / w; w = MAX_SIZE; } }
+                    else { if (h > MAX_SIZE) { w *= MAX_SIZE / h; h = MAX_SIZE; } }
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    resolve(canvas.toDataURL('image/jpeg', 0.7));
+                };
+            });
+        };
+
+        window.handleFile = (input) => {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async () => {
+                currentPhoto = await compressImage(reader.result);
+                document.getElementById('photoPreview').src = currentPhoto;
+                document.getElementById('photoPreview').classList.remove('hidden');
+                document.getElementById('cameraIcon').classList.add('hidden');
+            };
+            reader.readAsDataURL(file);
+        };
+
+        window.startMode = (mode) => {
+            activeMode = mode;
+            timeLeft = 60; elapsedTime = 0;
+            document.getElementById('scoreForm').classList.add('hidden');
+            document.getElementById('btnFinish').classList.add('hidden');
+            document.getElementById('robotImg').classList.add('animate-robot-dance');
+            document.getElementById('robotBg').style.opacity = "1";
+            document.getElementById('liveCommentary').innerText = "「 比賽開始！加油！ 」";
+            
+            playSound('START');
+            if (timer) clearInterval(timer);
+            
+            timer = setInterval(() => {
+                if (mode === 'LIMIT') {
+                    timeLeft--;
+                    document.getElementById('displayLimit').innerText = timeLeft + "s";
+                    if (timeLeft <= 0) {
+                        stopGame();
+                        document.getElementById('inputScore').classList.remove('hidden');
+                        document.getElementById('scoreForm').classList.remove('animated', 'zoom-in-95');
+                        document.getElementById('scoreForm').classList.remove('hidden');
+                    }
+                } else {
+                    elapsedTime += 0.1;
+                    document.getElementById('displayChal').innerText = elapsedTime.toFixed(1) + "s";
+                    document.getElementById('btnFinish').classList.remove('hidden');
+                }
+            }, 100);
+        };
+
+        window.finishChal = () => {
+            stopGame();
+            document.getElementById('inputScore').classList.add('hidden');
+            document.getElementById('scoreForm').classList.remove('hidden');
+        };
+
+        function stopGame() {
+            clearInterval(timer);
+            playSound('FINISH');
+            document.getElementById('robotImg').classList.remove('animate-robot-dance');
+            document.getElementById('robotBg').style.opacity = "0";
+            document.getElementById('liveCommentary').innerText = "「 比賽結束！請登錄成績 」";
+        }
+
+        window.submitScore = async () => {
+            const name = document.getElementById('inputName').value;
+            const score = document.getElementById('inputScore').value;
+            if (!name) return alert("請輸入姓名");
+
+            document.getElementById('btnSubmit').innerText = "上傳中...";
+            document.getElementById('btnSubmit').disabled = true;
+
+            const col = activeMode === 'LIMIT' ? 'limit_mode' : 'chal_mode';
+            try {
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', col), {
+                    name,
+                    photo: currentPhoto,
+                    createdAt: serverTimestamp(),
+                    ...(activeMode === 'LIMIT' ? { score: Number(score || 0) } : { timeSeconds: parseFloat(elapsedTime.toFixed(1)) })
+                });
+                location.reload();
+            } catch (e) {
+                alert("上傳失敗，請重試");
+                document.getElementById('btnSubmit').disabled = false;
+                document.getElementById('btnSubmit').innerText = "上傳成績";
+            }
+        };
+
+        // 匿名登入並監聽
+        signInAnonymously(auth).then(() => {
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'limit_mode'), (s) => {
+                const data = s.docs.map(d => d.data()).sort((a, b) => b.score - a.score).slice(0, 10);
+                document.getElementById('limitTable').innerHTML = data.map((r, i) => `
+                    <tr><td class="py-4 text-center">${i+1}</td>
+                    <td class="py-4 flex items-center gap-3"><img src="${r.photo || ''}" class="w-10 h-10 rounded-full bg-zinc-800">${r.name}</td>
+                    <td class="py-4 text-right px-4 text-red-500 font-black text-2xl">${r.score}</td></tr>`).join('');
+            });
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'chal_mode'), (s) => {
+                const data = s.docs.map(d => d.data()).sort((a, b) => a.timeSeconds - b.timeSeconds).slice(0, 10);
+                document.getElementById('chalTable').innerHTML = data.map((r, i) => `
+                    <tr><td class="py-4 text-center">${i+1}</td>
+                    <td class="py-4 flex items-center gap-3"><img src="${r.photo || ''}" class="w-10 h-10 rounded-full bg-zinc-800">${r.name}</td>
+                    <td class="py-4 text-right px-4 text-blue-400 font-black text-2xl">${r.timeSeconds}s</td></tr>`).join('');
+            });
+        });
+    </script>
+</body>
+</html>
