@@ -9,58 +9,41 @@
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- React & ReactDOM (UMD) -->
+    <!-- React & ReactDOM -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel for JSX -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.21.4/babel.min.js"></script>
 
-    <!-- Firebase App (Compat) -->
+    <!-- Firebase SDK (Compat version) -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <!-- Firebase Auth (Compat) -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-    <!-- Firebase Firestore (Compat) -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
         
         body { 
-            background-color: #050507; 
+            background-color: #020204; 
             margin: 0; 
-            padding: 0; 
-            overflow-x: hidden;
             font-family: 'Noto Sans TC', sans-serif;
+            color: #e4e4e7;
         }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #050507; }
-        ::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
-        
-        .glass-card { 
-            background: rgba(24, 24, 27, 0.6); 
-            backdrop-filter: blur(12px); 
-            border: 1px solid rgba(255,255,255,0.05); 
+        .glass-panel { 
+            background: rgba(24, 24, 27, 0.7); 
+            backdrop-filter: blur(16px); 
+            border: 1px solid rgba(255,255,255,0.1); 
         }
-        .active-glow-red { box-shadow: 0 0 25px rgba(239, 68, 68, 0.4); border-color: #ef4444 !important; }
-        .active-glow-blue { box-shadow: 0 0 25px rgba(59, 130, 246, 0.4); border-color: #3b82f6 !important; }
-        
-        .rank-badge {
-            width: 32px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 8px;
-            font-weight: 900;
-            font-style: italic;
+        .robot-glow {
+            filter: drop-shadow(0 0 15px rgba(239, 68, 68, 0.3));
         }
-        
-        .title-gradient {
-            background: linear-gradient(to right, #fff, #999);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
+        .rank-row:nth-child(1) .rank-num { color: #fbbf24; font-size: 1.25rem; }
+        .rank-row:nth-child(2) .rank-num { color: #d1d5db; }
+        .rank-row:nth-child(3) .rank-num { color: #d97706; }
+
+        /* 自定義捲軸 */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 10px; }
     </style>
 </head>
 <body>
@@ -69,6 +52,7 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
+        // Firebase 配置保持不變
         const firebaseConfig = {
             apiKey: "AIzaSyBTJbobhDm68TU19CrelfRJvlfwSni7b-o",
             authDomain: "excersise-d4003.firebaseapp.com",
@@ -93,282 +77,246 @@
             const [timeLeft, setTimeLeft] = useState(60);      
             const [elapsedTime, setElapsedTime] = useState(0); 
             const [isTimerRunning, setIsTimerRunning] = useState(false);
-            const [liveCommentary, setLiveCommentary] = useState("等待賽事啟動...");
             const [showForm, setShowForm] = useState(false);
             const [formData, setFormData] = useState({ name: '', score: '', photo: null });
             const [isSubmitting, setIsSubmitting] = useState(false);
             const fileInputRef = useRef(null);
 
-            // 登入邏輯：若未登入則自動執行匿名登入
+            // 1. 初始化登入
             useEffect(() => {
-                const unsubscribe = auth.onAuthStateChanged((currUser) => {
-                    if (currUser) {
-                        setUser(currUser);
+                const unsubscribe = auth.onAuthStateChanged((curr) => {
+                    if (curr) {
+                        setUser(curr);
+                        console.log("已連線:", curr.uid);
                     } else {
-                        auth.signInAnonymously().catch(err => console.error("Auth Fail:", err));
+                        auth.signInAnonymously().catch(e => console.error("登入失敗:", e));
                     }
                 });
                 return () => unsubscribe();
             }, []);
 
-            // 監聽排行榜資料
+            // 2. 監聽實時排行榜 (對應截圖中的資料路徑)
             useEffect(() => {
                 if (!user) return;
                 
-                const limitPath = `artifacts/${appId}/public/data/limit_mode`;
-                const chalPath = `artifacts/${appId}/public/data/chal_mode`;
+                const limitRef = db.collection(`artifacts/${appId}/public/data/limit_mode`);
+                const chalRef = db.collection(`artifacts/${appId}/public/data/chal_mode`);
 
-                const unsubLimit = db.collection(limitPath)
-                    .onSnapshot((s) => {
-                        const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
-                        setLimitRank(data.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)).slice(0, 10));
-                    }, err => console.error("Limit Snapshot Error:", err));
+                const unsub1 = limitRef.onSnapshot(s => {
+                    const docs = s.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setLimitRank(docs.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 10));
+                });
 
-                const unsubChal = db.collection(chalPath)
-                    .onSnapshot((s) => {
-                        const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
-                        setChalRank(data.sort((a, b) => (Number(a.timeSeconds) || 0) - (Number(b.timeSeconds) || 0)).slice(0, 10));
-                    }, err => console.error("Chal Snapshot Error:", err));
+                const unsub2 = chalRef.onSnapshot(s => {
+                    const docs = s.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setChalRank(docs.sort((a, b) => (a.timeSeconds || 0) - (b.timeSeconds || 0)).slice(0, 10));
+                });
 
-                return () => { unsubLimit(); unsubChal(); };
+                return () => { unsub1(); unsub2(); };
             }, [user]);
 
-            // 計時器邏輯
+            // 3. 計時器邏輯
             useEffect(() => {
-                let timer;
+                let interval;
                 if (isTimerRunning) {
-                    timer = setInterval(() => {
+                    interval = setInterval(() => {
                         if (activeMode === 'LIMIT') {
-                            setTimeLeft(prev => {
-                                if (prev <= 0.1) {
-                                    clearInterval(timer);
+                            setTimeLeft(t => {
+                                if (t <= 0.1) {
                                     setIsTimerRunning(false);
                                     setShowForm(true);
-                                    setLiveCommentary("時間到！請記錄成績。");
                                     return 0;
                                 }
-                                return Number((prev - 0.1).toFixed(1));
+                                return Number((t - 0.1).toFixed(1));
                             });
-                        } else if (activeMode === 'CHAL') {
-                            setElapsedTime(prev => Number((prev + 0.1).toFixed(1)));
+                        } else {
+                            setElapsedTime(t => Number((t + 0.1).toFixed(1)));
                         }
                     }, 100);
                 }
-                return () => clearInterval(timer);
+                return () => clearInterval(interval);
             }, [isTimerRunning, activeMode]);
 
-            const startMode = (mode) => {
+            const startChallenge = (mode) => {
                 setActiveMode(mode);
                 setTimeLeft(60);
                 setElapsedTime(0);
                 setShowForm(false);
                 setFormData({ name: '', score: '', photo: null });
                 setIsTimerRunning(true);
-                setLiveCommentary(mode === 'LIMIT' ? "限時挑戰開始！盡力投球！" : "神速挑戰開始！拼速度完成投球！");
             };
 
-            const submitScore = async () => {
+            // 4. 提交成績 (強化安全性與自動重連)
+            const handleSubmit = async () => {
                 if (!formData.name) return alert("請輸入挑戰者姓名");
                 if (activeMode === 'LIMIT' && !formData.score) return alert("請輸入進球數");
                 
                 setIsSubmitting(true);
 
-                // 如果當前 user 為空，嘗試重新簽入
+                // 檢查登入狀態，若丟失則即時補登
                 let currentUser = auth.currentUser;
                 if (!currentUser) {
                     try {
                         const cred = await auth.signInAnonymously();
                         currentUser = cred.user;
-                        setUser(currentUser);
                     } catch (e) {
                         setIsSubmitting(false);
-                        return alert("無法連線至伺服器，請檢查網路狀態。");
+                        return alert("網路不穩定，請重新整理頁面再試。");
                     }
                 }
 
                 const collectionName = activeMode === 'LIMIT' ? 'limit_mode' : 'chal_mode';
-                const collectionPath = `artifacts/${appId}/public/data/${collectionName}`;
-                
                 const payload = {
                     name: formData.name,
                     photo: formData.photo,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    ...(activeMode === 'LIMIT' 
-                        ? { score: Number(formData.score) } 
-                        : { timeSeconds: Number(elapsedTime) }
-                    )
+                    timestamp: Date.now(),
+                    ...(activeMode === 'LIMIT' ? { score: Number(formData.score) } : { timeSeconds: Number(elapsedTime) })
                 };
 
                 try {
-                    await db.collection(collectionPath).add(payload);
+                    await db.collection(`artifacts/${appId}/public/data/${collectionName}`).add(payload);
+                    alert("成績上傳成功！");
                     setShowForm(false);
                     setActiveMode(null);
-                    setLiveCommentary("成績已上傳！繼續挑戰吧！");
-                    alert("登錄成功！");
                 } catch (err) {
-                    console.error("Firebase Write Error:", err);
-                    alert("上傳失敗，請確認 Firebase Rules 權限。");
+                    console.error(err);
+                    alert("上傳失敗，請檢查 Firebase 規則設定。");
                 } finally {
                     setIsSubmitting(false);
                 }
             };
 
             return (
-                <div className="min-h-screen w-full text-zinc-100 flex flex-col md:flex-row overflow-hidden bg-[#050507]">
-                    {/* 左側：控制中心 */}
-                    <div className="w-full md:w-[380px] border-r border-white/5 bg-zinc-950 p-6 flex flex-col overflow-y-auto">
-                        <header className="mb-8">
-                            <div className="flex items-center gap-3 mb-2">
-                                <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center">
-                                    <i className="fas fa-basketball-ball text-white"></i>
-                                </div>
-                                <h1 className="text-xl font-black italic title-gradient tracking-tighter">機器人投球大賽</h1>
+                <div className="flex flex-col lg:flex-row min-h-screen">
+                    {/* 控制區 */}
+                    <div className="w-full lg:w-96 bg-zinc-950 p-6 flex flex-col border-r border-white/5">
+                        <div className="flex items-center gap-3 mb-8">
+                            <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center shadow-lg shadow-red-600/20">
+                                <i className="fas fa-robot text-white"></i>
                             </div>
-                            <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-[0.2em]">Yu Cheng High School Event</p>
-                        </header>
-
-                        <div className="mb-6 p-4 rounded-2xl bg-zinc-900 border border-white/10">
-                            <div className="text-[10px] font-black text-red-500 mb-1 flex items-center gap-2 uppercase tracking-widest">
-                                <span className={`w-1.5 h-1.5 bg-red-500 rounded-full ${isTimerRunning ? 'animate-pulse' : ''}`}></span> 即時動態
+                            <div>
+                                <h1 className="text-xl font-black italic tracking-tighter">育成高中機器人賽</h1>
+                                <p className="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">Humanoid Shoot-out v5</p>
                             </div>
-                            <p className="text-sm text-zinc-300 font-bold italic">「 {liveCommentary} 」</p>
                         </div>
 
-                        {/* 機器人形象圖 */}
-                        <div className="bg-zinc-900 rounded-3xl p-6 mb-6 border border-white/5 flex items-center justify-center min-h-[200px] overflow-hidden relative">
+                        {/* 機器人展示區 */}
+                        <div className="glass-panel rounded-3xl p-6 mb-8 flex items-center justify-center relative overflow-hidden group">
+                            <div className="absolute inset-0 bg-gradient-to-t from-red-600/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
                             <img 
                                 src="https://firebasestorage.googleapis.com/v0/b/excersise-d4003.firebasestorage.app/o/artifacts%2Fyu-cheng-robot-v5%2FS__10477572_0-removebg-preview.jpg?alt=media" 
-                                className={`h-40 object-contain transition-all duration-700 ${isTimerRunning ? 'scale-110 drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]' : ''}`}
+                                className={`h-48 object-contain robot-glow transition-transform duration-500 ${isTimerRunning ? 'scale-110' : ''}`}
                                 alt="Robot"
-                                onError={(e) => { e.target.src = "https://img.icons8.com/color/144/robot.png"; }}
                             />
                         </div>
 
-                        {/* 比賽按鈕 */}
-                        <div className="grid grid-cols-2 gap-3 mb-6">
-                            <button disabled={isTimerRunning} onClick={() => startMode('LIMIT')} className={`p-4 rounded-2xl border-2 transition-all ${activeMode === 'LIMIT' ? 'active-glow-red border-red-500 bg-red-500/10' : 'border-zinc-800 bg-zinc-900/50'}`}>
-                                <div className="text-[10px] font-bold opacity-60 mb-1 uppercase">時間限制</div>
-                                <div className="text-2xl font-black text-red-500">{activeMode === 'LIMIT' ? timeLeft : '60'}s</div>
-                            </button>
-                            <button disabled={isTimerRunning} onClick={() => startMode('CHAL')} className={`p-4 rounded-2xl border-2 transition-all ${activeMode === 'CHAL' ? 'active-glow-blue border-blue-500 bg-blue-500/10' : 'border-zinc-800 bg-zinc-900/50'}`}>
-                                <div className="text-[10px] font-bold opacity-60 mb-1 uppercase">神速挑戰</div>
-                                <div className="text-2xl font-black text-blue-400">{activeMode === 'CHAL' ? elapsedTime : '0.0'}s</div>
-                            </button>
+                        {/* 計時器/按鈕 */}
+                        <div className="space-y-4 mb-8">
+                            <div className="grid grid-cols-2 gap-3">
+                                <button disabled={isTimerRunning} onClick={() => startChallenge('LIMIT')} className={`p-4 rounded-2xl border-2 transition-all ${activeMode==='LIMIT'?'border-red-500 bg-red-500/10 shadow-[0_0_15px_rgba(239,68,68,0.2)]':'border-zinc-800 bg-zinc-900/50'}`}>
+                                    <div className="text-[10px] font-bold opacity-50 mb-1 uppercase">限時挑戰</div>
+                                    <div className="text-2xl font-black text-red-500 tracking-tighter">{activeMode==='LIMIT'?timeLeft:'60.0'}s</div>
+                                </button>
+                                <button disabled={isTimerRunning} onClick={() => startChallenge('CHAL')} className={`p-4 rounded-2xl border-2 transition-all ${activeMode==='CHAL'?'border-blue-500 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.2)]':'border-zinc-800 bg-zinc-900/50'}`}>
+                                    <div className="text-[10px] font-bold opacity-50 mb-1 uppercase">神速挑戰</div>
+                                    <div className="text-2xl font-black text-blue-400 tracking-tighter">{activeMode==='CHAL'?elapsedTime:'0.0'}s</div>
+                                </button>
+                            </div>
+                            
+                            {activeMode === 'CHAL' && isTimerRunning && (
+                                <button onClick={() => { setIsTimerRunning(false); setShowForm(true); }} className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl font-black text-white shadow-xl transition-all active:scale-95">
+                                    <i className="fas fa-stopwatch mr-2"></i> 我投進了！停止計時
+                                </button>
+                            )}
                         </div>
-
-                        {/* 神速賽專用停止鈕 */}
-                        {activeMode === 'CHAL' && isTimerRunning && (
-                            <button onClick={() => { setIsTimerRunning(false); setShowForm(true); }} className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl font-black text-lg mb-6 shadow-xl shadow-blue-600/30 transition-transform active:scale-95">
-                                <i className="fas fa-flag-checkered mr-2"></i> 我投進了！(停止計時)
-                            </button>
-                        )}
 
                         {/* 登錄表單 */}
                         {showForm && (
-                            <div className="bg-zinc-900 p-5 rounded-3xl border border-white/10 shadow-2xl mb-6 animate-in fade-in slide-in-from-bottom-4">
-                                <h3 className="font-bold mb-4 flex items-center gap-2 text-zinc-100 italic">
-                                    <i className="fas fa-trophy text-yellow-500"></i> 成績登錄
-                                </h3>
-                                <div className="space-y-4">
-                                    <div className="flex gap-4">
-                                        <div onClick={() => fileInputRef.current.click()} className="w-16 h-16 bg-black rounded-xl border border-dashed border-zinc-700 flex items-center justify-center cursor-pointer relative group">
-                                            {formData.photo ? <img src={formData.photo} className="w-full h-full object-cover rounded-xl" /> : <i className="fas fa-camera text-zinc-600"></i>}
-                                            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" capture="environment" onChange={(e) => {
-                                                const file = e.target.files[0];
-                                                if (file) {
-                                                    const reader = new FileReader();
-                                                    reader.onload = () => setFormData({...formData, photo: reader.result});
-                                                    reader.readAsDataURL(file);
-                                                }
-                                            }} />
-                                        </div>
-                                        <div className="flex-1 space-y-2">
-                                            <input type="text" placeholder="挑戰者姓名" className="w-full bg-black p-2 rounded-lg border border-zinc-800 text-sm focus:border-red-500 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-                                            {activeMode === 'LIMIT' && (
-                                                <input type="number" placeholder="進球顆數" className="w-full bg-black p-2 rounded-lg border border-zinc-800 text-sm focus:border-red-500 outline-none" value={formData.score} onChange={e => setFormData({...formData, score: e.target.value})} />
-                                            )}
-                                        </div>
+                            <div className="glass-panel p-5 rounded-3xl border-red-500/30 animate-in fade-in slide-in-from-bottom-4">
+                                <div className="flex gap-4 mb-4">
+                                    <div onClick={() => fileInputRef.current.click()} className="w-16 h-16 bg-black rounded-xl border border-dashed border-zinc-700 flex items-center justify-center cursor-pointer overflow-hidden">
+                                        {formData.photo ? <img src={formData.photo} className="w-full h-full object-cover" /> : <i className="fas fa-camera text-zinc-600"></i>}
+                                        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" capture="environment" onChange={e => {
+                                            const file = e.target.files[0];
+                                            if(file) {
+                                                const reader = new FileReader();
+                                                reader.onload = () => setFormData({...formData, photo: reader.result});
+                                                reader.readAsDataURL(file);
+                                            }
+                                        }}/>
                                     </div>
-                                    <button disabled={isSubmitting} onClick={submitScore} className="w-full bg-red-600 py-3 rounded-xl font-bold hover:bg-red-500 transition-all disabled:opacity-50">
-                                        {isSubmitting ? <i className="fas fa-sync fa-spin mr-2"></i> : <i className="fas fa-upload mr-2"></i>}
-                                        確認上傳成績
-                                    </button>
+                                    <div className="flex-1 space-y-2">
+                                        <input type="text" placeholder="挑戰者姓名" className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm focus:border-red-500 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                                        {activeMode === 'LIMIT' && (
+                                            <input type="number" placeholder="進球顆數" className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm focus:border-red-500 outline-none" value={formData.score} onChange={e => setFormData({...formData, score: e.target.value})} />
+                                        )}
+                                    </div>
                                 </div>
+                                <button disabled={isSubmitting} onClick={handleSubmit} className="w-full bg-red-600 hover:bg-red-500 py-3 rounded-xl font-bold transition-all disabled:opacity-50">
+                                    {isSubmitting ? <i className="fas fa-circle-notch fa-spin"></i> : "上傳英雄榜"}
+                                </button>
                             </div>
                         )}
                     </div>
 
-                    {/* 右側：排行榜 */}
-                    <div className="flex-1 p-8 grid grid-rows-2 gap-8 bg-[#050507] overflow-hidden">
-                        {/* 排行榜 A */}
-                        <div className="flex flex-col min-h-0">
-                            <div className="flex items-center justify-between mb-4">
-                                <h2 className="text-xl font-black italic flex items-center gap-2 text-red-500">
-                                    <i className="fas fa-fire"></i> LIMIT MODE英雄榜 (進球數)
-                                </h2>
-                                <span className="text-[10px] bg-red-500/10 text-red-500 px-2 py-1 rounded font-bold uppercase tracking-widest">TOP 10</span>
+                    {/* 排行榜區 */}
+                    <div className="flex-1 p-6 lg:p-10 flex flex-col gap-8 overflow-y-auto">
+                        <section className="flex-1 min-h-0 flex flex-col">
+                            <h2 className="text-xl font-black italic text-red-500 mb-4 flex items-center gap-2">
+                                <i className="fas fa-trophy"></i> LIMIT MODE 英雄榜 (進球數)
+                            </h2>
+                            <div className="glass-panel rounded-3xl overflow-hidden flex-1 flex flex-col">
+                                <div className="p-4 grid grid-cols-12 text-[10px] font-black text-zinc-500 uppercase tracking-widest border-b border-white/5">
+                                    <div className="col-span-2 text-center">RANK</div>
+                                    <div className="col-span-7">CHALLENGER</div>
+                                    <div className="col-span-3 text-right">SCORE</div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto">
+                                    {limitRank.map((r, i) => (
+                                        <div key={r.id} className="rank-row p-4 grid grid-cols-12 items-center hover:bg-white/5 border-b border-white/5 last:border-0">
+                                            <div className="col-span-2 text-center font-black italic rank-num">{i+1}</div>
+                                            <div className="col-span-7 flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-lg bg-zinc-800 overflow-hidden border border-white/10">
+                                                    {r.photo ? <img src={r.photo} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs opacity-20 italic">No Pic</div>}
+                                                </div>
+                                                <div className="font-bold truncate">{r.name}</div>
+                                            </div>
+                                            <div className="col-span-3 text-right font-black text-xl italic text-red-500">{r.score}<span className="text-[10px] ml-1 font-normal opacity-40">G</span></div>
+                                        </div>
+                                    ))}
+                                    {limitRank.length === 0 && <div className="p-10 text-center text-zinc-600 italic">尚未有挑戰紀錄...</div>}
+                                </div>
                             </div>
-                            <div className="flex-1 glass-card rounded-3xl overflow-y-auto">
-                                <table className="w-full text-left">
-                                    <thead className="sticky top-0 bg-zinc-950/80 backdrop-blur-md text-[10px] font-black text-zinc-500 uppercase tracking-widest border-b border-white/5">
-                                        <tr><th className="p-4 text-center w-20">名次</th><th className="p-4">挑戰者</th><th className="p-4 text-right">進球數</th></tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-white/5">
-                                        {limitRank.length > 0 ? limitRank.map((r, i) => (
-                                            <tr key={r.id} className="hover:bg-white/5">
-                                                <td className="p-4">
-                                                    <div className={`rank-badge mx-auto ${i===0?'bg-yellow-500 text-black':i===1?'bg-zinc-300 text-black':i===2?'bg-orange-500 text-black':'text-zinc-600'}`}>{i+1}</div>
-                                                </td>
-                                                <td className="p-4">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="w-10 h-10 rounded-lg bg-zinc-800 border border-white/10 overflow-hidden">
-                                                            {r.photo ? <img src={r.photo} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs opacity-30 italic">{r.name?.charAt(0)}</div>}
-                                                        </div>
-                                                        <span className="font-bold">{r.name}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="p-4 text-right font-black text-2xl text-red-500 italic">{r.score}<span className="text-[10px] ml-1 font-normal opacity-40">GOALS</span></td>
-                                            </tr>
-                                        )) : <tr><td colSpan="3" className="p-10 text-center text-zinc-600 italic">暫無紀錄</td></tr>}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
+                        </section>
 
-                        {/* 排行榜 B */}
-                        <div className="flex flex-col min-h-0">
-                            <div className="flex items-center justify-between mb-4">
-                                <h2 className="text-xl font-black italic flex items-center gap-2 text-blue-400">
-                                    <i className="fas fa-bolt"></i> SPEED CHALLENGE英雄榜 (秒數)
-                                </h2>
-                                <span className="text-[10px] bg-blue-400/10 text-blue-400 px-2 py-1 rounded font-bold uppercase tracking-widest">TOP 10</span>
+                        <section className="flex-1 min-h-0 flex flex-col">
+                            <h2 className="text-xl font-black italic text-blue-400 mb-4 flex items-center gap-2">
+                                <i className="fas fa-bolt"></i> SPEED CHALLENGE 英雄榜 (秒數)
+                            </h2>
+                            <div className="glass-panel rounded-3xl overflow-hidden flex-1 flex flex-col">
+                                <div className="p-4 grid grid-cols-12 text-[10px] font-black text-zinc-500 uppercase tracking-widest border-b border-white/5">
+                                    <div className="col-span-2 text-center">RANK</div>
+                                    <div className="col-span-7">CHALLENGER</div>
+                                    <div className="col-span-3 text-right">TIME</div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto">
+                                    {chalRank.map((r, i) => (
+                                        <div key={r.id} className="rank-row p-4 grid grid-cols-12 items-center hover:bg-white/5 border-b border-white/5 last:border-0">
+                                            <div className="col-span-2 text-center font-black italic rank-num">{i+1}</div>
+                                            <div className="col-span-7 flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-lg bg-zinc-800 overflow-hidden border border-white/10">
+                                                    {r.photo ? <img src={r.photo} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs opacity-20 italic">No Pic</div>}
+                                                </div>
+                                                <div className="font-bold truncate">{r.name}</div>
+                                            </div>
+                                            <div className="col-span-3 text-right font-black text-xl italic text-blue-400">{r.timeSeconds}<span className="text-[10px] ml-1 font-normal opacity-40">S</span></div>
+                                        </div>
+                                    ))}
+                                    {chalRank.length === 0 && <div className="p-10 text-center text-zinc-600 italic">尚未有挑戰紀錄...</div>}
+                                </div>
                             </div>
-                            <div className="flex-1 glass-card rounded-3xl overflow-y-auto">
-                                <table className="w-full text-left">
-                                    <thead className="sticky top-0 bg-zinc-950/80 backdrop-blur-md text-[10px] font-black text-zinc-500 uppercase tracking-widest border-b border-white/5">
-                                        <tr><th className="p-4 text-center w-20">名次</th><th className="p-4">挑戰者</th><th className="p-4 text-right">完賽時間</th></tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-white/5">
-                                        {chalRank.length > 0 ? chalRank.map((r, i) => (
-                                            <tr key={r.id} className="hover:bg-white/5">
-                                                <td className="p-4">
-                                                    <div className={`rank-badge mx-auto ${i===0?'bg-yellow-500 text-black':i===1?'bg-zinc-300 text-black':i===2?'bg-orange-500 text-black':'text-zinc-600'}`}>{i+1}</div>
-                                                </td>
-                                                <td className="p-4">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="w-10 h-10 rounded-lg bg-zinc-800 border border-white/10 overflow-hidden">
-                                                            {r.photo ? <img src={r.photo} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs opacity-30 italic">{r.name?.charAt(0)}</div>}
-                                                        </div>
-                                                        <span className="font-bold">{r.name}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="p-4 text-right font-black text-2xl text-blue-400 italic">{r.timeSeconds}<span className="text-[10px] ml-1 font-normal opacity-40">SEC</span></td>
-                                            </tr>
-                                        )) : <tr><td colSpan="3" className="p-10 text-center text-zinc-600 italic">暫無紀錄</td></tr>}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
+                        </section>
                     </div>
                 </div>
             );
