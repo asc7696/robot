@@ -228,8 +228,10 @@
                                 <button onClick={() => { setIsTimerRunning(false); setShowForm(true); }} className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl font-black text-white shadow-xl transition-all active:scale-95">
                                     <i className="fas fa-stopwatch mr-2"></i> 我投進了！停止計時
                                 </button>
-                            )}
-                            <div className="mt-auto space-y-3 text-[13px] text-zinc-400 font-medium">
+                            )}                     
+                        </div>
+                      {/* 遙控器按鈕 */}
+                         <div className="mt-auto space-y-3 text-[13px] text-zinc-400 font-medium">
                                 <h4 className="text-[11px] font-black tracking-widest text-zinc-600 uppercase mb-2 border-b border-white/5 pb-1">遙控器按鍵 조합</h4>
                                 <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-zinc-200">上 / 下</span> 前進/後退</div>
                                 <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-zinc-200">左 / 右</span> 左轉/右轉</div>
@@ -237,8 +239,7 @@
                                 <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-white bg-blue-600 px-1.5 rounded">○鈕</span> <span className="text-white">右手投球</span></div>
                                 <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-white bg-red-600 px-1.5 rounded">□鈕</span> <span className="text-white">左手投球</span></div>
                                 <div className="flex justify-between border-b border-zinc-800 pb-1.5"><span className="font-black text-zinc-200">X鈕 + R鈕組合</span> 夾球/放球</div>
-                            </div>
-                        </div>
+                          </div>
 
                         {/* 登錄表單 */}
                         {showForm && (
