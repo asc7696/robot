@@ -62,13 +62,13 @@ export default function App() {
     // 監聽限時賽
     const unsubLimit = onSnapshot(limitCol, (s) => {
       const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
-      setLimitRank(data.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 10));
+      setLimitRank(data.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)).slice(0, 10));
     }, (err) => console.error("監聽限時賽失敗:", err));
 
     // 監聽挑戰賽
     const unsubChal = onSnapshot(chalCol, (s) => {
       const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
-      setChalRank(data.sort((a, b) => (a.timeSeconds || 0) - (b.timeSeconds || 0)).slice(0, 10));
+      setChalRank(data.sort((a, b) => (Number(a.timeSeconds) || 0) - (Number(b.timeSeconds) || 0)).slice(0, 10));
     }, (err) => console.error("監聽挑戰賽失敗:", err));
 
     return () => { unsubLimit(); unsubChal(); };
@@ -114,7 +114,7 @@ export default function App() {
       return;
     }
     if (!user) {
-      console.error("未登入，無法寫入資料");
+      alert("資料庫尚未連線，請稍後再試");
       return;
     }
 
@@ -125,20 +125,19 @@ export default function App() {
       const payload = {
         name: formData.name,
         photo: formData.photo,
-        createdAt: serverTimestamp(), // 使用伺服器時間更準確
+        createdAt: serverTimestamp(),
         timestamp: Date.now(),
         ...(activeMode === 'LIMIT' ? { score: Number(formData.score || 0) } : { timeSeconds: Number(elapsedTime.toFixed(1)) })
       };
 
-      console.log("正在寫入路徑:", `artifacts/${appId}/public/data/${collectionName}`);
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', collectionName), payload);
       
-      console.log("寫入成功！");
       setShowForm(false);
       setActiveMode(null);
+      alert("成績已成功發布！");
     } catch (err) {
       console.error("寫入 Firestore 失敗:", err);
-      alert("寫入失敗，請檢查 Firestore 規則或網路連線");
+      alert("寫入失敗，請確認 Firebase 規則已開啟。");
     } finally {
       setIsSubmitting(false);
     }
@@ -146,12 +145,15 @@ export default function App() {
 
   return (
     <div className="h-screen w-full bg-[#050507] text-zinc-100 flex overflow-hidden font-sans">
+      {/* 注入必要的圖標庫連結 */}
+      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
       {/* 左側：操作與狀態 */}
       <div className="w-[400px] border-r border-white/5 bg-zinc-950 p-6 flex flex-col overflow-y-auto">
         <header className="mb-8">
           <div className="flex items-center gap-4 mb-2">
             <div className="w-12 h-12 bg-red-600 rounded-2xl flex items-center justify-center shadow-lg shadow-red-600/20">
-              <i className="fa-solid fa-robot text-2xl text-white"></i>
+              <i className="fas fa-robot text-2xl text-white"></i>
             </div>
             <div>
               <h1 className="text-xl font-black text-white italic">育成高中機器人賽</h1>
@@ -168,12 +170,13 @@ export default function App() {
           <p className="text-sm font-medium text-blue-100 italic">「 {liveCommentary} 」</p>
         </div>
 
-        {/* 機器人去背圖展示 */}
-        <div className="bg-zinc-900 rounded-3xl p-8 mb-6 flex justify-center items-center border border-white/5 relative group">
+        {/* 機器人展示區 */}
+        <div className="bg-zinc-900 rounded-3xl p-8 mb-6 flex justify-center items-center border border-white/5 relative group min-h-[200px]">
           <img 
             src="https://firebasestorage.googleapis.com/v0/b/excersise-d4003.firebasestorage.app/o/artifacts%2Fyu-cheng-robot-v5%2FS__10477572_0-removebg-preview.jpg?alt=media" 
             className={`h-48 object-contain transition-all duration-500 ${isTimerRunning ? 'scale-110 rotate-1 animate-pulse' : 'group-hover:scale-105'}`}
             alt="Robot"
+            onError={(e) => { e.target.src = "https://img.icons8.com/color/144/robot.png"; }} 
           />
         </div>
 
@@ -197,16 +200,14 @@ export default function App() {
           </button>
         </div>
 
-        {/* 手動停止按鈕 */}
         {activeMode === 'CHAL' && isTimerRunning && (
           <button onClick={() => { setIsTimerRunning(false); setShowForm(true); }} className="w-full bg-blue-600 py-4 rounded-2xl font-black text-lg mb-6 shadow-xl shadow-blue-600/20 active:scale-95 transition-all">
             我投完了！(停止計時)
           </button>
         )}
 
-        {/* 登錄表單 */}
         {showForm && (
-          <div className="bg-zinc-900 p-5 rounded-3xl border border-red-500/50 shadow-2xl animate-in fade-in slide-in-from-bottom-4">
+          <div className="bg-zinc-900 p-5 rounded-3xl border border-red-500/50 shadow-2xl">
             <h3 className="font-bold mb-4">🏆 挑戰結束！請填寫資料</h3>
             <div className="space-y-4">
               <div className="flex gap-4">
@@ -214,7 +215,7 @@ export default function App() {
                   onClick={() => fileInputRef.current.click()} 
                   className="w-20 h-20 bg-black rounded-xl border-2 border-dashed border-zinc-700 flex flex-col items-center justify-center cursor-pointer hover:border-red-500 overflow-hidden"
                 >
-                  {formData.photo ? <img src={formData.photo} className="w-full h-full object-cover" /> : <i className="fa-solid fa-camera text-zinc-600"></i>}
+                  {formData.photo ? <img src={formData.photo} className="w-full h-full object-cover" alt="Challenge" /> : <i className="fas fa-camera text-zinc-600"></i>}
                   <input type="file" ref={fileInputRef} className="hidden" accept="image/*" capture="environment" onChange={(e) => {
                     const file = e.target.files[0];
                     if (file) {
@@ -270,13 +271,13 @@ export default function App() {
               </thead>
               <tbody className="divide-y divide-white/5">
                 {limitRank.map((r, i) => (
-                  <tr key={r.id} className="group hover:bg-white/5 transition-all">
+                  <tr key={r.id || i} className="group hover:bg-white/5 transition-all">
                     <td className="p-4 text-center">
                       <span className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${i===0 ? 'bg-yellow-500 text-black' : 'text-zinc-600'}`}>{i+1}</span>
                     </td>
                     <td className="p-4 flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-zinc-800 overflow-hidden border border-white/10">
-                        {r.photo && <img src={r.photo} className="w-full h-full object-cover" />}
+                        {r.photo && <img src={r.photo} className="w-full h-full object-cover" alt={r.name} />}
                       </div>
                       <span className="font-bold text-zinc-200">{r.name}</span>
                     </td>
@@ -300,13 +301,13 @@ export default function App() {
               </thead>
               <tbody className="divide-y divide-white/5">
                 {chalRank.map((r, i) => (
-                  <tr key={r.id} className="group hover:bg-white/5 transition-all">
+                  <tr key={r.id || i} className="group hover:bg-white/5 transition-all">
                     <td className="p-4 text-center">
                       <span className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${i===0 ? 'bg-yellow-500 text-black' : 'text-zinc-600'}`}>{i+1}</span>
                     </td>
                     <td className="p-4 flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-zinc-800 overflow-hidden border border-white/10">
-                        {r.photo && <img src={r.photo} className="w-full h-full object-cover" />}
+                        {r.photo && <img src={r.photo} className="w-full h-full object-cover" alt={r.name} />}
                       </div>
                       <span className="font-bold text-zinc-200">{r.name}</span>
                     </td>
