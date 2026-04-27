@@ -1,325 +1,292 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, onSnapshot, query, limit, doc, serverTimestamp } from 'firebase/firestore';
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>育成高中人型機器人體驗活動系統</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- React & ReactDOM (UMD) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.21.4/babel.min.js"></script>
+    <style>
+        body { background-color: #050507; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #050507; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-// 您的 Firebase 配置
-const firebaseConfig = {
-  apiKey: "AIzaSyBTJbobhDm68TU19CrelfRJvlfwSni7b-o",
-  authDomain: "excersise-d4003.firebaseapp.com",
-  projectId: "excersise-d4003",
-  storageBucket: "excersise-d4003.firebasestorage.app",
-  messagingSenderId: "188132630421",
-  appId: "1:188132630421:web:3a82d3e874bdbbe3e8e09c"
-};
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+        // Firebase 模組透過 CDN 載入
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
 
-// 固定路徑，確保與 Firestore 規則匹配
-const appId = "yu-cheng-robot-v5";
-const apiKey = ""; // 系統自動注入
+        // Firebase 配置
+        const firebaseConfig = {
+            apiKey: "AIzaSyBTJbobhDm68TU19CrelfRJvlfwSni7b-o",
+            authDomain: "excersise-d4003.firebaseapp.com",
+            projectId: "excersise-d4003",
+            storageBucket: "excersise-d4003.firebasestorage.app",
+            messagingSenderId: "188132630421",
+            appId: "1:188132630421:web:3a82d3e874bdbbe3e8e09c"
+        };
 
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [limitRank, setLimitRank] = useState([]);    
-  const [chalRank, setChalRank] = useState([]);      
-  const [activeMode, setActiveMode] = useState(null); 
-  
-  const [timeLeft, setTimeLeft] = useState(60);      
-  const [elapsedTime, setElapsedTime] = useState(0); 
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [liveCommentary, setLiveCommentary] = useState("等待賽事啟動...");
-  const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({ name: '', score: '', photo: null });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  const fileInputRef = useRef(null);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = "yu-cheng-robot-v5";
 
-  // 1. 匿名登入與監聽
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const result = await signInAnonymously(auth);
-        console.log("已匿名登入:", result.user.uid);
-      } catch (err) {
-        console.error("Firebase 登入失敗", err);
-      }
-    };
-    initAuth();
-    const unsubscribeAuth = onAuthStateChanged(auth, setUser);
-    return () => unsubscribeAuth();
-  }, []);
+        function App() {
+            const [user, setUser] = useState(null);
+            const [limitRank, setLimitRank] = useState([]);    
+            const [chalRank, setChalRank] = useState([]);      
+            const [activeMode, setActiveMode] = useState(null); 
+            const [timeLeft, setTimeLeft] = useState(60);      
+            const [elapsedTime, setElapsedTime] = useState(0); 
+            const [isTimerRunning, setIsTimerRunning] = useState(false);
+            const [liveCommentary, setLiveCommentary] = useState("等待賽事啟動...");
+            const [showForm, setShowForm] = useState(false);
+            const [formData, setFormData] = useState({ name: '', score: '', photo: null });
+            const [isSubmitting, setIsSubmitting] = useState(false);
+            const fileInputRef = useRef(null);
 
-  useEffect(() => {
-    if (!user) return;
-
-    // 取得集合引用
-    const limitCol = collection(db, 'artifacts', appId, 'public', 'data', 'limit_mode');
-    const chalCol = collection(db, 'artifacts', appId, 'public', 'data', 'chal_mode');
-
-    // 監聽限時賽
-    const unsubLimit = onSnapshot(limitCol, (s) => {
-      const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
-      setLimitRank(data.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)).slice(0, 10));
-    }, (err) => console.error("監聽限時賽失敗:", err));
-
-    // 監聽挑戰賽
-    const unsubChal = onSnapshot(chalCol, (s) => {
-      const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
-      setChalRank(data.sort((a, b) => (Number(a.timeSeconds) || 0) - (Number(b.timeSeconds) || 0)).slice(0, 10));
-    }, (err) => console.error("監聽挑戰賽失敗:", err));
-
-    return () => { unsubLimit(); unsubChal(); };
-  }, [user]);
-
-  // 2. 計時邏輯
-  useEffect(() => {
-    let timer;
-    if (isTimerRunning) {
-      timer = setInterval(() => {
-        if (activeMode === 'LIMIT') {
-          setTimeLeft(prev => {
-            if (prev <= 1) {
-              clearInterval(timer);
-              setIsTimerRunning(false);
-              setShowForm(true);
-              return 0;
-            }
-            return prev - 1;
-          });
-        } else if (activeMode === 'CHAL') {
-          setElapsedTime(prev => prev + 0.1);
-        }
-      }, 100);
-    }
-    return () => clearInterval(timer);
-  }, [isTimerRunning, activeMode]);
-
-  const startMode = (mode) => {
-    setActiveMode(mode);
-    setTimeLeft(60);
-    setElapsedTime(0);
-    setShowForm(false);
-    setFormData({ name: '', score: '', photo: null });
-    setIsTimerRunning(true);
-    setLiveCommentary("比賽開始！機器人準備投球！");
-  };
-
-  // 3. 提交資料
-  const submitScore = async () => {
-    if (!formData.name) {
-      alert("請輸入姓名");
-      return;
-    }
-    if (!user) {
-      alert("資料庫尚未連線，請稍後再試");
-      return;
-    }
-
-    setIsSubmitting(true);
-    const collectionName = activeMode === 'LIMIT' ? 'limit_mode' : 'chal_mode';
-    
-    try {
-      const payload = {
-        name: formData.name,
-        photo: formData.photo,
-        createdAt: serverTimestamp(),
-        timestamp: Date.now(),
-        ...(activeMode === 'LIMIT' ? { score: Number(formData.score || 0) } : { timeSeconds: Number(elapsedTime.toFixed(1)) })
-      };
-
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', collectionName), payload);
-      
-      setShowForm(false);
-      setActiveMode(null);
-      alert("成績已成功發布！");
-    } catch (err) {
-      console.error("寫入 Firestore 失敗:", err);
-      alert("寫入失敗，請確認 Firebase 規則已開啟。");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="h-screen w-full bg-[#050507] text-zinc-100 flex overflow-hidden font-sans">
-      {/* 注入必要的圖標庫連結 */}
-      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-
-      {/* 左側：操作與狀態 */}
-      <div className="w-[400px] border-r border-white/5 bg-zinc-950 p-6 flex flex-col overflow-y-auto">
-        <header className="mb-8">
-          <div className="flex items-center gap-4 mb-2">
-            <div className="w-12 h-12 bg-red-600 rounded-2xl flex items-center justify-center shadow-lg shadow-red-600/20">
-              <i className="fas fa-robot text-2xl text-white"></i>
-            </div>
-            <div>
-              <h1 className="text-xl font-black text-white italic">育成高中機器人賽</h1>
-              <p className="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">Humanoid Shoot-out v5</p>
-            </div>
-          </div>
-        </header>
-
-        {/* 實況播報 */}
-        <div className="mb-6 p-4 rounded-2xl bg-blue-600/10 border border-blue-500/20">
-          <div className="text-[10px] font-black text-blue-400 mb-1 flex items-center gap-2">
-            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> LIVE COMMENTARY
-          </div>
-          <p className="text-sm font-medium text-blue-100 italic">「 {liveCommentary} 」</p>
-        </div>
-
-        {/* 機器人展示區 */}
-        <div className="bg-zinc-900 rounded-3xl p-8 mb-6 flex justify-center items-center border border-white/5 relative group min-h-[200px]">
-          <img 
-            src="https://firebasestorage.googleapis.com/v0/b/excersise-d4003.firebasestorage.app/o/artifacts%2Fyu-cheng-robot-v5%2FS__10477572_0-removebg-preview.jpg?alt=media" 
-            className={`h-48 object-contain transition-all duration-500 ${isTimerRunning ? 'scale-110 rotate-1 animate-pulse' : 'group-hover:scale-105'}`}
-            alt="Robot"
-            onError={(e) => { e.target.src = "https://img.icons8.com/color/144/robot.png"; }} 
-          />
-        </div>
-
-        {/* 模式切換 */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <button 
-            disabled={isTimerRunning}
-            onClick={() => startMode('LIMIT')} 
-            className={`p-4 rounded-2xl border-2 transition-all ${activeMode === 'LIMIT' ? 'border-red-500 bg-red-500/10' : 'border-zinc-800 hover:border-zinc-700 opacity-50'}`}
-          >
-            <div className="text-[10px] font-bold mb-1">限時賽</div>
-            <div className="text-2xl font-black text-red-500">{activeMode === 'LIMIT' ? timeLeft : '60'}s</div>
-          </button>
-          <button 
-            disabled={isTimerRunning}
-            onClick={() => startMode('CHAL')} 
-            className={`p-4 rounded-2xl border-2 transition-all ${activeMode === 'CHAL' ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-800 hover:border-zinc-700 opacity-50'}`}
-          >
-            <div className="text-[10px] font-bold mb-1">神速賽</div>
-            <div className="text-2xl font-black text-blue-400">{activeMode === 'CHAL' ? elapsedTime.toFixed(1) : '0.0'}s</div>
-          </button>
-        </div>
-
-        {activeMode === 'CHAL' && isTimerRunning && (
-          <button onClick={() => { setIsTimerRunning(false); setShowForm(true); }} className="w-full bg-blue-600 py-4 rounded-2xl font-black text-lg mb-6 shadow-xl shadow-blue-600/20 active:scale-95 transition-all">
-            我投完了！(停止計時)
-          </button>
-        )}
-
-        {showForm && (
-          <div className="bg-zinc-900 p-5 rounded-3xl border border-red-500/50 shadow-2xl">
-            <h3 className="font-bold mb-4">🏆 挑戰結束！請填寫資料</h3>
-            <div className="space-y-4">
-              <div className="flex gap-4">
-                <div 
-                  onClick={() => fileInputRef.current.click()} 
-                  className="w-20 h-20 bg-black rounded-xl border-2 border-dashed border-zinc-700 flex flex-col items-center justify-center cursor-pointer hover:border-red-500 overflow-hidden"
-                >
-                  {formData.photo ? <img src={formData.photo} className="w-full h-full object-cover" alt="Challenge" /> : <i className="fas fa-camera text-zinc-600"></i>}
-                  <input type="file" ref={fileInputRef} className="hidden" accept="image/*" capture="environment" onChange={(e) => {
-                    const file = e.target.files[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onload = () => setFormData({...formData, photo: reader.result});
-                      reader.readAsDataURL(file);
+            useEffect(() => {
+                const initAuth = async () => {
+                    try {
+                        await signInAnonymously(auth);
+                    } catch (err) {
+                        console.error("Firebase Auth Error", err);
                     }
-                  }} />
+                };
+                initAuth();
+                const unsubscribe = onAuthStateChanged(auth, setUser);
+                return () => unsubscribe();
+            }, []);
+
+            useEffect(() => {
+                if (!user) return;
+                const limitCol = collection(db, 'artifacts', appId, 'public', 'data', 'limit_mode');
+                const chalCol = collection(db, 'artifacts', appId, 'public', 'data', 'chal_mode');
+
+                const unsubLimit = onSnapshot(limitCol, (s) => {
+                    const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setLimitRank(data.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)).slice(0, 10));
+                });
+
+                const unsubChal = onSnapshot(chalCol, (s) => {
+                    const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setChalRank(data.sort((a, b) => (Number(a.timeSeconds) || 0) - (Number(b.timeSeconds) || 0)).slice(0, 10));
+                });
+
+                return () => { unsubLimit(); unsubChal(); };
+            }, [user]);
+
+            useEffect(() => {
+                let timer;
+                if (isTimerRunning) {
+                    timer = setInterval(() => {
+                        if (activeMode === 'LIMIT') {
+                            setTimeLeft(prev => {
+                                if (prev <= 1) {
+                                    clearInterval(timer);
+                                    setIsTimerRunning(false);
+                                    setShowForm(true);
+                                    return 0;
+                                }
+                                return prev - 1;
+                            });
+                        } else if (activeMode === 'CHAL') {
+                            setElapsedTime(prev => prev + 0.1);
+                        }
+                    }, 100);
+                }
+                return () => clearInterval(timer);
+            }, [isTimerRunning, activeMode]);
+
+            const startMode = (mode) => {
+                setActiveMode(mode);
+                setTimeLeft(60);
+                setElapsedTime(0);
+                setShowForm(false);
+                setFormData({ name: '', score: '', photo: null });
+                setIsTimerRunning(true);
+                setLiveCommentary(mode === 'LIMIT' ? "限時挑戰開始！盡可能投進更多球！" : "神速挑戰開始！以最快速度完成投球！");
+            };
+
+            const submitScore = async () => {
+                if (!formData.name) return alert("請輸入姓名");
+                if (!user) return alert("尚未連線");
+                setIsSubmitting(true);
+                const collectionName = activeMode === 'LIMIT' ? 'limit_mode' : 'chal_mode';
+                try {
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', collectionName), {
+                        name: formData.name,
+                        photo: formData.photo,
+                        createdAt: serverTimestamp(),
+                        ...(activeMode === 'LIMIT' ? { score: Number(formData.score || 0) } : { timeSeconds: Number(elapsedTime.toFixed(1)) })
+                    });
+                    setShowForm(false);
+                    setActiveMode(null);
+                    alert("發布成功！");
+                } catch (err) {
+                    alert("上傳失敗");
+                } finally {
+                    setIsSubmitting(false);
+                }
+            };
+
+            return (
+                <div className="h-screen w-full text-zinc-100 flex overflow-hidden font-sans">
+                    {/* 左側：控制台 */}
+                    <div className="w-[400px] border-r border-white/5 bg-zinc-950 p-6 flex flex-col overflow-y-auto">
+                        <header className="mb-8">
+                            <div className="flex items-center gap-4 mb-2">
+                                <div className="w-12 h-12 bg-red-600 rounded-2xl flex items-center justify-center shadow-lg shadow-red-600/20">
+                                    <i className="fas fa-robot text-2xl text-white"></i>
+                                </div>
+                                <div>
+                                    <h1 className="text-xl font-black text-white italic">育成高中機器人賽</h1>
+                                    <p className="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">Humanoid Shoot-out v5</p>
+                                </div>
+                            </div>
+                        </header>
+
+                        <div className="mb-6 p-4 rounded-2xl bg-blue-600/10 border border-blue-500/20">
+                            <div className="text-[10px] font-black text-blue-400 mb-1 flex items-center gap-2 uppercase tracking-widest">
+                                <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> Live Commentary
+                            </div>
+                            <p className="text-sm font-medium text-blue-100 italic">「 {liveCommentary} 」</p>
+                        </div>
+
+                        <div className="bg-zinc-900 rounded-3xl p-8 mb-6 flex justify-center items-center border border-white/5 relative min-h-[200px]">
+                            <img 
+                                src="https://firebasestorage.googleapis.com/v0/b/excersise-d4003.firebasestorage.app/o/artifacts%2Fyu-cheng-robot-v5%2FS__10477572_0-removebg-preview.jpg?alt=media" 
+                                className={`h-48 object-contain transition-all duration-500 ${isTimerRunning ? 'scale-110 rotate-1 animate-pulse' : ''}`}
+                                alt="Robot"
+                                onError={(e) => { e.target.src = "https://img.icons8.com/color/144/robot.png"; }}
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 mb-6">
+                            <button disabled={isTimerRunning} onClick={() => startMode('LIMIT')} className={`p-4 rounded-2xl border-2 transition-all ${activeMode === 'LIMIT' ? 'border-red-500 bg-red-500/10' : 'border-zinc-800 opacity-50'}`}>
+                                <div className="text-[10px] font-bold mb-1">限時賽</div>
+                                <div className="text-2xl font-black text-red-500">{activeMode === 'LIMIT' ? timeLeft : '60'}s</div>
+                            </button>
+                            <button disabled={isTimerRunning} onClick={() => startMode('CHAL')} className={`p-4 rounded-2xl border-2 transition-all ${activeMode === 'CHAL' ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-800 opacity-50'}`}>
+                                <div className="text-[10px] font-bold mb-1">神速賽</div>
+                                <div className="text-2xl font-black text-blue-400">{activeMode === 'CHAL' ? elapsedTime.toFixed(1) : '0.0'}s</div>
+                            </button>
+                        </div>
+
+                        {activeMode === 'CHAL' && isTimerRunning && (
+                            <button onClick={() => { setIsTimerRunning(false); setShowForm(true); }} className="w-full bg-blue-600 py-4 rounded-2xl font-black text-lg mb-6 shadow-xl shadow-blue-600/20 active:scale-95 transition-all">
+                                投球完成！(停止計時)
+                            </button>
+                        )}
+
+                        {showForm && (
+                            <div className="bg-zinc-900 p-5 rounded-3xl border border-red-500/50 shadow-2xl">
+                                <h3 className="font-bold mb-4">🏆 請登錄成績</h3>
+                                <div className="space-y-4">
+                                    <div className="flex gap-4">
+                                        <div onClick={() => fileInputRef.current.click()} className="w-20 h-20 bg-black rounded-xl border-2 border-dashed border-zinc-700 flex flex-col items-center justify-center cursor-pointer overflow-hidden">
+                                            {formData.photo ? <img src={formData.photo} className="w-full h-full object-cover" /> : <i className="fas fa-camera text-zinc-600"></i>}
+                                            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" capture="environment" onChange={(e) => {
+                                                const file = e.target.files[0];
+                                                if (file) {
+                                                    const reader = new FileReader();
+                                                    reader.onload = () => setFormData({...formData, photo: reader.result});
+                                                    reader.readAsDataURL(file);
+                                                }
+                                            }} />
+                                        </div>
+                                        <div className="flex-1 space-y-2">
+                                            <input type="text" placeholder="挑戰者姓名" className="w-full bg-black p-3 rounded-lg border border-zinc-800 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                                            {activeMode === 'LIMIT' && (
+                                                <input type="number" placeholder="進球數" className="w-full bg-black p-3 rounded-lg border border-zinc-800 outline-none" value={formData.score} onChange={e => setFormData({...formData, score: e.target.value})} />
+                                            )}
+                                        </div>
+                                    </div>
+                                    <button disabled={isSubmitting} onClick={submitScore} className="w-full bg-red-600 py-3 rounded-xl font-bold">{isSubmitting ? "上傳中..." : "確認上傳"}</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 右側：排行榜 */}
+                    <div className="flex-1 p-8 grid grid-rows-2 gap-8 overflow-hidden bg-[#050507]">
+                        {/* 限時賽 */}
+                        <div className="flex flex-col min-h-0">
+                            <h2 className="text-xl font-black text-red-500 mb-4 flex items-center gap-2 italic">
+                                <span className="w-1.5 h-6 bg-red-600"></span> LIMIT MODE LEADERBOARD
+                            </h2>
+                            <div className="flex-1 bg-zinc-900/50 rounded-3xl border border-white/5 overflow-y-auto">
+                                <table className="w-full text-left">
+                                    <thead className="sticky top-0 bg-zinc-950 p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">
+                                        <tr><th className="p-4 text-center">Rank</th><th className="p-4">Challenger</th><th className="p-4 text-right">Score</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5">
+                                        {limitRank.map((r, i) => (
+                                            <tr key={r.id || i} className="hover:bg-white/5">
+                                                <td className="p-4 text-center"><span className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${i===0 ? 'bg-yellow-500 text-black' : 'text-zinc-600'}`}>{i+1}</span></td>
+                                                <td className="p-4 flex items-center gap-3">
+                                                    <div className="w-10 h-10 rounded-full bg-zinc-800 overflow-hidden border border-white/10">
+                                                        {r.photo && <img src={r.photo} className="w-full h-full object-cover" />}
+                                                    </div>
+                                                    <span className="font-bold">{r.name}</span>
+                                                </td>
+                                                <td className="p-4 text-right font-black text-2xl text-red-500">{r.score} <span className="text-xs opacity-40">B</span></td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* 神速賽 */}
+                        <div className="flex flex-col min-h-0">
+                            <h2 className="text-xl font-black text-blue-400 mb-4 flex items-center gap-2 italic">
+                                <span className="w-1.5 h-6 bg-blue-500"></span> SPEED CHALLENGE RANK
+                            </h2>
+                            <div className="flex-1 bg-zinc-900/50 rounded-3xl border border-white/5 overflow-y-auto">
+                                <table className="w-full text-left">
+                                    <thead className="sticky top-0 bg-zinc-950 p-4 text-[10px] font-black text-zinc-500 uppercase tracking-widest">
+                                        <tr><th className="p-4 text-center">Rank</th><th className="p-4">Challenger</th><th className="p-4 text-right">Time</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5">
+                                        {chalRank.map((r, i) => (
+                                            <tr key={r.id || i} className="hover:bg-white/5">
+                                                <td className="p-4 text-center"><span className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${i===0 ? 'bg-yellow-500 text-black' : 'text-zinc-600'}`}>{i+1}</span></td>
+                                                <td className="p-4 flex items-center gap-3">
+                                                    <div className="w-10 h-10 rounded-full bg-zinc-800 overflow-hidden border border-white/10">
+                                                        {r.photo && <img src={r.photo} className="w-full h-full object-cover" />}
+                                                    </div>
+                                                    <span className="font-bold">{r.name}</span>
+                                                </td>
+                                                <td className="p-4 text-right font-black text-2xl text-blue-400">{r.timeSeconds} <span className="text-xs opacity-40">S</span></td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div className="flex-1 space-y-2">
-                  <input 
-                    type="text" 
-                    placeholder="挑戰者姓名" 
-                    className="w-full bg-black p-3 rounded-lg border border-zinc-800 outline-none focus:border-red-500"
-                    value={formData.name}
-                    onChange={e => setFormData({...formData, name: e.target.value})}
-                  />
-                  {activeMode === 'LIMIT' && (
-                    <input 
-                      type="number" 
-                      placeholder="進球總數" 
-                      className="w-full bg-black p-3 rounded-lg border border-zinc-800 outline-none font-bold"
-                      value={formData.score}
-                      onChange={e => setFormData({...formData, score: e.target.value})}
-                    />
-                  )}
-                </div>
-              </div>
-              <button 
-                disabled={isSubmitting}
-                onClick={submitScore} 
-                className="w-full bg-red-600 hover:bg-red-500 disabled:bg-zinc-700 py-3 rounded-xl font-bold transition-all"
-              >
-                {isSubmitting ? "上傳中..." : "確認發布至英雄榜"}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+            );
+        }
 
-      {/* 右側：英雄排行榜 */}
-      <div className="flex-1 p-8 grid grid-rows-2 gap-8 overflow-hidden">
-        
-        {/* 限時賽排行榜 */}
-        <div className="flex flex-col min-h-0">
-          <h2 className="text-xl font-black text-red-500 mb-4 flex items-center gap-2 italic">
-            <span className="w-1.5 h-6 bg-red-600"></span> LIMIT MODE LEADERBOARD
-          </h2>
-          <div className="flex-1 bg-zinc-900/50 rounded-3xl border border-white/5 overflow-y-auto">
-            <table className="w-full">
-              <thead className="text-[10px] font-black text-zinc-500 uppercase tracking-widest sticky top-0 bg-zinc-950 p-4">
-                <tr><th className="p-4 text-center">Rank</th><th className="p-4 text-left">Challenger</th><th className="p-4 text-right">Score</th></tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {limitRank.map((r, i) => (
-                  <tr key={r.id || i} className="group hover:bg-white/5 transition-all">
-                    <td className="p-4 text-center">
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${i===0 ? 'bg-yellow-500 text-black' : 'text-zinc-600'}`}>{i+1}</span>
-                    </td>
-                    <td className="p-4 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-zinc-800 overflow-hidden border border-white/10">
-                        {r.photo && <img src={r.photo} className="w-full h-full object-cover" alt={r.name} />}
-                      </div>
-                      <span className="font-bold text-zinc-200">{r.name}</span>
-                    </td>
-                    <td className="p-4 text-right font-black text-2xl text-red-500">{r.score} <span className="text-xs opacity-40">B</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* 挑戰賽排行榜 */}
-        <div className="flex flex-col min-h-0">
-          <h2 className="text-xl font-black text-blue-400 mb-4 flex items-center gap-2 italic">
-            <span className="w-1.5 h-6 bg-blue-500"></span> SPEED CHALLENGE RANK
-          </h2>
-          <div className="flex-1 bg-zinc-900/50 rounded-3xl border border-white/5 overflow-y-auto">
-            <table className="w-full">
-              <thead className="text-[10px] font-black text-zinc-500 uppercase tracking-widest sticky top-0 bg-zinc-950 p-4">
-                <tr><th className="p-4 text-center">Rank</th><th className="p-4 text-left">Challenger</th><th className="p-4 text-right">Time</th></tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {chalRank.map((r, i) => (
-                  <tr key={r.id || i} className="group hover:bg-white/5 transition-all">
-                    <td className="p-4 text-center">
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${i===0 ? 'bg-yellow-500 text-black' : 'text-zinc-600'}`}>{i+1}</span>
-                    </td>
-                    <td className="p-4 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-zinc-800 overflow-hidden border border-white/10">
-                        {r.photo && <img src={r.photo} className="w-full h-full object-cover" alt={r.name} />}
-                      </div>
-                      <span className="font-bold text-zinc-200">{r.name}</span>
-                    </td>
-                    <td className="p-4 text-right font-black text-2xl text-blue-400">{r.timeSeconds} <span className="text-xs opacity-40">S</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  );
-}
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
